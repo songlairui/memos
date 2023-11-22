@@ -2,7 +2,7 @@ import { omit } from "lodash-es";
 import * as api from "@/helpers/api";
 import { DEFAULT_MEMO_LIMIT } from "@/helpers/consts";
 import store, { useAppSelector } from "../";
-import { updateLoadingStatus, createMemo, deleteMemo, patchMemo, upsertMemos, LoadingStatus } from "../reducer/memo";
+import { updateLoadingStatus, markEditing, createMemo, deleteMemo, patchMemo, upsertMemos, LoadingStatus } from "../reducer/memo";
 import { useMemoCacheStore } from "../v1";
 
 export const convertResponseModelMemo = (memo: Memo): Memo => {
@@ -99,9 +99,15 @@ export const useMemoStore = () => {
       const regex = new RegExp(`[@(.+?)](${memoId})`);
       return state.memos.filter((m) => m.content.match(regex));
     },
-    createMemo: async (memoCreate: MemoCreate) => {
+    markEditing(id?: number) {
+      store.dispatch(markEditing(id));
+    },
+    createMemo: async (memoCreate: MemoCreate, markContinueEdit?: boolean) => {
       const { data } = await api.createMemo(memoCreate);
       const memo = convertResponseModelMemo(data);
+      if (markContinueEdit) {
+        store.dispatch(markEditing(memo.id));
+      }
       store.dispatch(createMemo(memo));
       memoCacheStore.setMemoCache(memo);
       return memo;

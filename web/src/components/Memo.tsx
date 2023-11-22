@@ -90,6 +90,17 @@ const Memo: React.FC<Props> = (props: Props) => {
     return () => observer.disconnect();
   }, [lazyRendering, filterStore.state]);
 
+  // auto open via continue edit
+  useEffect(() => {
+    const shouldAutoOpen = memoStore.getState().editing === memo.id;
+    if (shouldAutoOpen) {
+      showMemoEditorDialog({
+        memoId: memo.id,
+      });
+      memoStore.markEditing(undefined);
+    }
+  }, []);
+
   if (!shouldRender) {
     // Render a placeholder to occupy the space.
     return <div className={`w-full h-32 !bg-transparent ${"memos-" + memo.id}`} ref={memoContainerRef} />;

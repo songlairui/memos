@@ -6,6 +6,7 @@ export type LoadingStatus = "incomplete" | "fetching" | "complete";
 interface State {
   loadingStatus: LoadingStatus;
   memos: Memo[];
+  editing?: number;
 }
 
 const memoSlice = createSlice({
@@ -25,6 +26,12 @@ const memoSlice = createSlice({
       return {
         ...state,
         memos: uniqBy([...action.payload, ...state.memos], "id"),
+      };
+    },
+    markEditing: (state, action: PayloadAction<number | undefined>) => {
+      return {
+        ...state,
+        editing: action.payload,
       };
     },
     createMemo: (state, action: PayloadAction<Memo>) => {
@@ -61,6 +68,6 @@ const memoSlice = createSlice({
   },
 });
 
-export const { updateLoadingStatus, upsertMemos, createMemo, patchMemo, deleteMemo } = memoSlice.actions;
+export const { updateLoadingStatus, upsertMemos, markEditing, createMemo, patchMemo, deleteMemo } = memoSlice.actions;
 
 export default memoSlice.reducer;

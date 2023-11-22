@@ -18,6 +18,7 @@ import Icon from "../Icon";
 import VisibilityIcon from "../VisibilityIcon";
 import TagSelector from "./ActionButton/TagSelector";
 import Editor, { EditorRefActions } from "./Editor";
+import { LoadingButton } from "./LoadingButton";
 import RelationListView from "./RelationListView";
 import ResourceListView from "./ResourceListView";
 
@@ -292,7 +293,7 @@ const MemoEditor = (props: Props) => {
     }
   };
 
-  const handleSaveBtnClick = async () => {
+  const handleSaveBtnClick = async (mark?: boolean) => {
     if (state.isRequesting) {
       return;
     }
@@ -304,12 +305,13 @@ const MemoEditor = (props: Props) => {
       };
     });
     const content = editorRef.current?.getContent() ?? "";
+    let editing: any;
     try {
       if (memoId && memoId !== UNKNOWN_ID) {
         const prevMemo = await memoStore.getMemoById(memoId ?? UNKNOWN_ID);
 
         if (prevMemo) {
-          await memoStore.patchMemo({
+          editing = await memoStore.patchMemo({
             id: prevMemo.id,
             content,
             visibility: state.memoVisibility,
@@ -318,12 +320,15 @@ const MemoEditor = (props: Props) => {
           });
         }
       } else {
-        await memoStore.createMemo({
-          content,
-          visibility: state.memoVisibility,
-          resourceIdList: state.resourceList.map((resource) => resource.id),
-          relationList: state.relationList,
-        });
+        editing = await memoStore.createMemo(
+          {
+            content,
+            visibility: state.memoVisibility,
+            resourceIdList: state.resourceList.map((resource) => resource.id),
+            relationList: state.relationList,
+          },
+          mark
+        );
         filterStore.clearFilter();
       }
       editorRef.current?.setContent("");
@@ -353,6 +358,7 @@ const MemoEditor = (props: Props) => {
     if (onConfirm) {
       onConfirm();
     }
+    return editing;
   };
 
   const handleCheckBoxBtnClick = () => {
@@ -489,8 +495,11 @@ const MemoEditor = (props: Props) => {
             ))}
           </Select>
         </div>
-        <div className="shrink-0 flex flex-row justify-end items-center">
-          <Button color="success" disabled={!allowSave} onClick={handleSaveBtnClick}>
+        <div className="shrink-0 flex gap-2 flex-row justify-end items-center">
+          <LoadingButton disabled={!allowSave} onClick={() => handleSaveBtnClick(true)}>
+            {"保存并继续编辑"}
+          </LoadingButton>
+          <Button color="success" disabled={!allowSave} onClick={() => handleSaveBtnClick(false)}>
             {t("editor.save")}
           </Button>
         </div>

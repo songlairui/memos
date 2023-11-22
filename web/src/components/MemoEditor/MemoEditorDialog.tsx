@@ -40,6 +40,7 @@ const MemoEditorDialog: React.FC<Props> = ({ memoId, relationList, destroy }: Pr
           memoId={memoId}
           relationList={relationList}
           onConfirm={handleCloseBtnClick}
+          enableAutoSave
         />
       </div>
     </>

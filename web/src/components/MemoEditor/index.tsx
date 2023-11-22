@@ -1,8 +1,10 @@
-import { Select, Option, Button, IconButton, Divider } from "@mui/joy";
+import { Select, Option, Button, IconButton, Divider, Tooltip } from "@mui/joy";
 import { isNumber, last, uniq, uniqBy } from "lodash-es";
+import { AlertTriangleIcon } from "lucide-react";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import { useTranslation } from "react-i18next";
+import { useThrottleFn } from "react-use";
 import useLocalStorage from "react-use/lib/useLocalStorage";
 import { TAB_SPACE_WIDTH, UNKNOWN_ID, VISIBILITY_SELECTOR_ITEMS } from "@/helpers/consts";
 import { clearContentQueryParam } from "@/helpers/utils";
@@ -32,6 +34,8 @@ interface Props {
   memoId?: MemoId;
   relationList?: MemoRelation[];
   onConfirm?: () => void;
+  enableContinueEditing?: boolean;
+  enableAutoSave?: boolean;
 }
 
 interface State {
@@ -43,7 +47,7 @@ interface State {
 }
 
 const MemoEditor = (props: Props) => {
-  const { className, editorClassName, cacheKey, memoId, onConfirm } = props;
+  const { className, editorClassName, cacheKey, memoId, onConfirm, enableContinueEditing, enableAutoSave } = props;
   const { i18n } = useTranslation();
   const t = useTranslate();
   const contentCacheKey = `memo-editor-${cacheKey}`;
@@ -109,6 +113,67 @@ const MemoEditor = (props: Props) => {
       });
     }
   }, [memoId]);
+
+  const { count, loading, error, invokeChange, flush } = useThrottleSave<Memo>(enableAutoSave, {
+    // 获取初始数据
+    getInitial() {
+      if (!memoId || memoId === UNKNOWN_ID) {
+        return;
+      }
+      // 检查缓存中是否存在 - 没有则直接返回 - 不自动保存
+      return memoStore.getState().memos.find((item) => item.id === memoId);
+    },
+    // 获取当前数据
+    getCurrent() {
+      const content = editorRef.current?.getContent() ?? "";
+      return {
+        content,
+        visibility: state.memoVisibility,
+        resourceIdList: state.resourceList.map((resource) => resource.id),
+        relationList: state.relationList,
+      };
+    },
+    // 检查是否变更
+    checkChange(current, prev) {
+      return current.content?.trim() !== prev.content?.trim();
+    },
+    // 保存变更
+    async saveFn(editing, prevMemo) {
+      setState((state) => {
+        return {
+          ...state,
+          isRequesting: true,
+        };
+      });
+      let _err: Error | undefined = undefined;
+      try {
+        await memoStore.patchMemo({
+          ...editing,
+          id: prevMemo.id,
+        });
+
+        // Upsert tag with the content.
+        const matchedNodes = getMatchedNodes(editing.content!);
+        const tagNameList = uniq(matchedNodes.filter((node) => node.parserName === "tag").map((node) => node.matchedContent.slice(1)));
+        for (const tagName of tagNameList) {
+          await tagStore.upsertTag(tagName);
+        }
+      } catch (error: any) {
+        _err = error;
+      }
+
+      setState((state) => {
+        return {
+          ...state,
+          isRequesting: false,
+        };
+      });
+      if (_err) {
+        throw _err;
+      }
+      //
+    },
+  });
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
     if (!editorRef.current) {
@@ -242,6 +307,7 @@ const MemoEditor = (props: Props) => {
         isUploadingResource: false,
       };
     });
+    invokeChange();
     return resource;
   };
 
@@ -267,6 +333,7 @@ const MemoEditor = (props: Props) => {
         ...prevState,
         resourceList: [...prevState.resourceList, ...uploadedResourceList],
       }));
+      invokeChange();
     }
   };
 
@@ -288,16 +355,20 @@ const MemoEditor = (props: Props) => {
     setHasContent(content !== "");
     if (content !== "") {
       setContentCache(content);
+      invokeChange();
     } else {
       localStorage.removeItem(contentCacheKey);
     }
   };
 
-  const handleSaveBtnClick = async (mark?: boolean) => {
+  const handleSaveBtnClick = async (
+    /* 标记创建, 创建之后继续编辑 */
+    markCreate?: boolean
+  ) => {
     if (state.isRequesting) {
       return;
     }
-
+    flush();
     setState((state) => {
       return {
         ...state,
@@ -305,13 +376,13 @@ const MemoEditor = (props: Props) => {
       };
     });
     const content = editorRef.current?.getContent() ?? "";
-    let editing: any;
+
     try {
       if (memoId && memoId !== UNKNOWN_ID) {
         const prevMemo = await memoStore.getMemoById(memoId ?? UNKNOWN_ID);
 
         if (prevMemo) {
-          editing = await memoStore.patchMemo({
+          await memoStore.patchMemo({
             id: prevMemo.id,
             content,
             visibility: state.memoVisibility,
@@ -320,14 +391,14 @@ const MemoEditor = (props: Props) => {
           });
         }
       } else {
-        editing = await memoStore.createMemo(
+        await memoStore.createMemo(
           {
             content,
             visibility: state.memoVisibility,
             resourceIdList: state.resourceList.map((resource) => resource.id),
             relationList: state.relationList,
           },
-          mark
+          markCreate
         );
         filterStore.clearFilter();
       }
@@ -358,7 +429,6 @@ const MemoEditor = (props: Props) => {
     if (onConfirm) {
       onConfirm();
     }
-    return editing;
   };
 
   const handleCheckBoxBtnClick = () => {
@@ -403,6 +473,7 @@ const MemoEditor = (props: Props) => {
 
   const handleTagSelectorClick = useCallback((tag: string) => {
     editorRef.current?.insertText(`#${tag} `);
+    invokeChange();
   }, []);
 
   const handleEditorFocus = () => {
@@ -496,10 +567,30 @@ const MemoEditor = (props: Props) => {
           </Select>
         </div>
         <div className="shrink-0 flex gap-2 flex-row justify-end items-center">
-          <LoadingButton disabled={!allowSave} onClick={() => handleSaveBtnClick(true)}>
-            {"保存并继续编辑"}
-          </LoadingButton>
-          <Button color="success" disabled={!allowSave} onClick={() => handleSaveBtnClick(false)}>
+          {!error && enableAutoSave && (Boolean(count) || loading) && (
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              <span>{loading ? "自动保存中" : "即将自动保存"}</span>
+              <span>{`${".".repeat(count + 1)}`}</span>
+            </span>
+          )}
+          {error && (
+            <Tooltip title="Auto Save Error" placement="top">
+              <IconButton
+                size="sm"
+                onClick={async () => {
+                  invokeChange();
+                }}
+              >
+                <AlertTriangleIcon />
+              </IconButton>
+            </Tooltip>
+          )}
+          {enableContinueEditing && (
+            <LoadingButton disabled={!allowSave} onClick={() => handleSaveBtnClick(true)}>
+              {"保存并继续编辑"}
+            </LoadingButton>
+          )}
+          <Button color="success" disabled={!allowSave} loading={loading} onClick={() => handleSaveBtnClick(false)}>
             {t("editor.save")}
           </Button>
         </div>
@@ -507,5 +598,102 @@ const MemoEditor = (props: Props) => {
     </div>
   );
 };
+
+/** 6s 一保存 */
+function useThrottleSave<T extends { [key: string]: any }>(
+  enable: boolean | undefined,
+  {
+    getInitial,
+    getCurrent,
+    checkChange,
+    saveFn,
+  }: {
+    getInitial(): T | undefined;
+    getCurrent(prev: T): Partial<T>;
+    checkChange(cur: Partial<T>, prev: T): boolean;
+    saveFn(val: Partial<T>, old: T): any | Promise<any>;
+  }
+) {
+  const [val, setVal] = useState<Partial<T> | undefined>(getInitial());
+  const [count, setCount] = useState(0); // 计时
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<Error>();
+  const timer = useRef<any>();
+
+  async function exec(value: Partial<T>) {
+    if (loading) {
+      return;
+    }
+    if (timer.current) {
+      clearInterval(timer.current);
+      timer.current = undefined;
+    }
+    setLoading(true);
+    try {
+      await saveFn(value, getInitial()!);
+      setError(undefined);
+    } catch (error: any) {
+      setError(error);
+    }
+
+    setCount(0);
+    setLoading(false);
+  }
+
+  const noopExec: typeof exec = () => Promise.resolve();
+
+  const activeExec = useRef(noopExec);
+
+  useThrottleFn(
+    (value) => {
+      if (value === getInitial()) {
+        return;
+      }
+      activeExec.current(value!);
+    },
+    6 * 1000,
+    [val]
+  );
+
+  function invokeChange() {
+    if (enable) {
+      const initial = getInitial();
+      if (!initial) {
+        return;
+      }
+      const current = getCurrent(initial);
+      const isChanged = checkChange(current, initial);
+      if (!isChanged) {
+        return;
+      }
+
+      activeExec.current = exec;
+      setVal(current);
+      setCount((prev) => Math.max(1, prev));
+      if (!timer.current) {
+        timer.current = setInterval(() => {
+          setCount((prev) => prev + 1);
+        }, 1000);
+      }
+    }
+  }
+  function flush() {
+    activeExec.current = noopExec;
+    setCount(0);
+    if (timer.current) {
+      clearInterval(timer.current);
+    }
+  }
+  return {
+    count,
+    error,
+    loading,
+    invokeChange,
+    flush,
+    retry() {
+      return exec(getCurrent(getInitial()!));
+    },
+  };
+}
 
 export default MemoEditor;
